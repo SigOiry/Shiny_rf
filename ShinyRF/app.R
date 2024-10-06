@@ -13,50 +13,61 @@ options(shiny.maxRequestSize = 100*1024^2)
 ui <- fluidPage(
     useShinyjs(),  # Include shinyjs
     
-    # Add custom CSS to make the map take up the entire screen
+    # Add custom CSS to make the map take up the entire screen and include the loader CSS
     tags$head(
-        tags$style(HTML("#map {
-                        height: 100vh !important;
-                        width: 100vw !important;
-                        margin: 0;
-                        position: absolute;
-                        top: 0;
-                        left: 0;
-                        z-index: 1;
-                        }
-body, html {
-    margin: 0;
-    padding: 0;
-    height: 100%;
-    overflow: hidden;
-}
-.panel-container {
-    z-index: 1000;
-}
-#loading-animation {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 2000;
-    display: none;
-    font-size: 24px;
-    font-weight: bold;
-    color: #333;
-    animation: spin 1s linear infinite;
-}
+        tags$style(HTML("
+            #map {
+                height: 100vh !important;
+                width: 100vw !important;
+                margin: 0;
+                position: absolute;
+                top: 0;
+                left: 0;
+                z-index: 1;
+            }
+            body, html {
+                margin: 0;
+                padding: 0;
+                height: 100%;
+                overflow: hidden;
+            }
+            .panel-container {
+                z-index: 1000;
+            }
+            #loading-animation {
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                z-index: 2000;
+                display: none;
+            }
 
-@keyframes spin {
-    0% { transform: translate(-50%, -50%) rotate(0deg); }
-    100% { transform: translate(-50%, -50%) rotate(360deg); }
-}"
-        ))
+            /* Loader CSS */
+            .loader {
+                width: 50px;
+                padding: 8px;
+                aspect-ratio: 1;
+                border-radius: 50%;
+                background: #25b09b;
+                --_m: 
+                    conic-gradient(#0000 10%, #000),
+                    linear-gradient(#000 0 0) content-box;
+                -webkit-mask: var(--_m);
+                mask: var(--_m);
+                -webkit-mask-composite: source-out;
+                mask-composite: subtract;
+                animation: l3 1s infinite linear;
+            }
+            @keyframes l3 { to { transform: rotate(1turn); } }
+        "))
     ),
     
-    div(id = "loading-animation", "Loading...")
+    # Replace loading-animation div
+    div(id = "loading-animation", div(class = "loader")),
     
     # Layout with sidebar for controls and main panel for map
-    ,sidebarLayout(
+    sidebarLayout(
         # Sidebar with three tabs for controls
         sidebarPanel(
             width = 3,  # Adjust width of sidebar if needed
