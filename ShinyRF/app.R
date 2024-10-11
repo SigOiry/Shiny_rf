@@ -19,8 +19,8 @@ ui <- fluidPage(
     tags$head(
         tags$style(HTML("
             #map {
-                height: 100vh !important;
-                width: 100vw !important;
+                height: 90vh !important;
+                width: 70vw !important;
                 margin: 0;
                 position: absolute;
                 top: 0;
@@ -112,7 +112,9 @@ ui <- fluidPage(
                              tabPanel("Prediction",
                                       helpText("Select trained model to predict on raster."),
                                       fileInput("modelFile", "Choose a Trained Model File", accept = c(".rds")),
-                                      
+                                      actionButton("selectsaving_prediction", "Select a directory"),
+                                      verbatimTextOutput("prediction_saving_path"),
+                                      textInput("prediction_name", "Enter the name of the prediction"),
                                       actionButton("predictRF", "Predict on Raster"),
                                       verbatimTextOutput("predictResults")
                              ),
@@ -132,7 +134,7 @@ ui <- fluidPage(
         
         # Main panel for leaflet map
         mainPanel(
-            leafletOutput("map", width = "100%", height = "100%")
+            leafletOutput("map")
         )
     )
 )
@@ -145,14 +147,31 @@ server <- function(input, output, session) {
     shp_training <- reactiveVal(NULL)
     drawnPolygons <- reactiveVal(NULL)
     shapefileStructure <- reactiveVal(NULL)
-    currentPolygon <- reactiveVal(NULL)  # To store the current polygon being drawn
+    currentPolygon <- reactiveVal(NULL)
+    savingpathmodel <- reactiveVal(NULL)
+    savingpathpred <- reactiveVal(NULL)# To store the current polygon being drawn
     
     #### MAP OUTPUT ####
     
     # Initialize a blank map that remains visible at all times
-    output$map <- renderLeaflet({
-        leaflet(options = leafletOptions(maxZoom = 28, zoomAnimation = TRUE, fadeAnimation = TRUE, preferCanvas = TRUE)) %>%
-            addProviderTiles(providers$OpenStreetMap)
+    
+    output$map <- 
+        renderLeaflet({
+            leaflet(options = leafletOptions(maxZoom = 28, zoomAnimation = TRUE, fadeAnimation = TRUE, preferCanvas = TRUE)) %>%
+                # Create separate panes for base layers and the raster overlay
+                addMapPane("rasterPane", zIndex = 1000) %>%
+                addMapPane("basePane", zIndex = 0) %>%
+                
+                
+                # Add base map tiles to the basePane
+                addTiles(options = tileOptions(pane = "basePane", noWrap = TRUE), group = "OpenStreetMap") %>%
+                addProviderTiles("Esri.WorldImagery", options = tileOptions(pane = "basePane"), group = "ESRI Satellite") %>% 
+                leaflet::addLayersControl(
+                    baseGroups = c("OpenStreetMap", "ESRI Satellite"),
+                    options = layersControlOptions(collapsed = FALSE),
+                    position = "topright"
+                )
+                
     })
     
     #### RGB IMAGE TAB ####
@@ -188,7 +207,7 @@ server <- function(input, output, session) {
     # Create RGB composition and display it on the map
     observeEvent(input$createRGB, {
         req(rasterData(), input$redBand, input$greenBand, input$blueBand)
-        
+        input$map_groups
         # Start loading animation
         shinyjs::show("loading-animation")
         
@@ -196,42 +215,71 @@ server <- function(input, output, session) {
         tryCatch({
             # Stack the selected bands to create an RGB composite
             rgbRaster <- stars::read_stars(input$rasterFile$datapath)
-            
+            rgbRaster[rgbRaster == 0] <- NA
+
             # terra::RGB(rgbRaster)<-c(as.numeric(input$redBand),as.numeric(input$greenBand),as.numeric(input$blueBand))
-            
+
             # rgbRaster_col <- terra::colorize(rgbRaster, "rgb",stretch = "hist")
             # rgbRaster_col <- terra::colorize(rgbRaster_col, "rgb",stretch = "hist")
-            
+
             bbox <- st_bbox(rgbRaster)
-            
+
             # Step 2: Convert the bounding box to an sf object
             bbox_sf <- st_as_sfc(bbox)
-            
+
             # Step 3: Reproject the bounding box to WGS84 (EPSG:4326)
             bbox_wgs84 <- st_transform(bbox_sf, crs = 4326)
-            
+
             # Step 4: Get the new reprojected bounding box (extent)
             reprojected_bbox <- st_bbox(bbox_wgs84)
-            
-            
-            
+
+
+
             # Add to leaflet map
             extent_raster <- terra::project(ext(rasterData()), from = terra::crs(rasterData()), to = "+proj=longlat +datum=WGS84 +no_defs")
+
+            
+            # Convert stars object to terra for Leaflet compatibility
+            # terra_img <- terra::rast(input$rasterFile$datapath)
+            # terra_img[terra_img == 0] <- NA
+            # 
+            # terra_img<- terra_img %>% 
+            #     terra::stretch(minv=0, maxv=1)
+            # 
+            # extent_raster <- terra::project(ext(rasterData()), from = terra::crs(rasterData()), to = "+proj=longlat +datum=WGS84 +no_defs")
+            # 
+            # 
+            # # Create an RGB composition from the three bands
+            # RGB(terra_img,type="rgb") <- c(as.numeric(input$redBand),as.numeric(input$greenBand),as.numeric(input$blueBand))
+            # 
+            # img_rgb <- colorize(terra_img , "col", stretch = "hist")
+            
             
             leafletProxy("map") %>%
                 clearImages() %>%
-                addStarsRGB(rgbRaster,as.numeric(input$redBand),
+                 # Add the RGB raster image in the custom pane with the higher zIndex
+
+                flyToBounds(
+                    lng1 = as.numeric(extent_raster[1]),
+                    lat1 = as.numeric(extent_raster[3]),
+                    lng2 = as.numeric(extent_raster[2]),
+                    lat2 = as.numeric(extent_raster[4])
+                )%>%
+                addStarsRGB(rgbRaster, as.numeric(input$redBand),
                             as.numeric(input$greenBand),
                             as.numeric(input$blueBand),
-                            quantiles = c(0.05,0.95),
-                            maxBytes = 6 * 1024 * 1024) %>% 
-                # addRasterImage(rgbRaster_col) %>%
-                flyToBounds(
-                    lng1 = as.numeric(reprojected_bbox[1]),
-                    lat1 = as.numeric(reprojected_bbox[2]),
-                    lng2 = as.numeric(reprojected_bbox[3]),
-                    lat2 = as.numeric(reprojected_bbox[4])
-                )
+                            group = "test",
+                            quantiles = c(0.05, 0.95),
+                            maxBytes = 6 * 1024 * 1024,
+                            options = tileOptions(pane = "rasterPane"))
+                #            rgb = T,
+                #            group = "test"
+                #            )
+                # addRasterImage(img_rgb, 
+                #                method = "ngb",
+                #             group = "test",
+                #             maxBytes = 6 * 1024 * 1024,
+                #             options = tileOptions(pane = "rasterPane"))
             
             # Stop loading animation
             shinyjs::hide("loading-animation")
@@ -393,7 +441,7 @@ server <- function(input, output, session) {
                     shp_training(shp)
                     # Check and transform CRS if necessary
                     if (is.na(st_crs(shp))) {
-                        showNotification("Shapefile CRS is missing. Cannot proceed.", type = "error")
+                        showNotification("Shapefile CRS is missing. Have you provided the .prj ?", type = "error")
                         return(NULL)
                     } else if (st_crs(shp) != st_crs(rasterData())) {
                         shp <- st_transform(shp, terra::crs(rasterData()))
@@ -455,6 +503,7 @@ server <- function(input, output, session) {
     
     observeEvent(input$selectsaving,{
         path_model <- rstudioapi::selectDirectory(caption = "where to save the model")
+        savingpathmodel(path_model)
         output$model_saving_path <- renderPrint({ path_model})
     })
     
@@ -462,105 +511,124 @@ server <- function(input, output, session) {
         req(rasterData(), input$trainingClassColumn,shp_training())
         
      tryCatch({
-           if(nchar(input$modelname)!= 0 ){
-               tryCatch({
+           if(nchar(input$modelname) == 0 ){
+              break 
+           }else if(nchar(savingpathmodel()) == 0){
+               break
+            }else{
+                   tryCatch({
                    # Extract raster values for each polygon
-                   shinyjs::show("loading-animation")
-                   
-                   training_img <- rasterData()
-                   training_shp <- terra::vect(shp_training())
-                   names(training_img)<-paste0("B",c(1:nlyr(training_img)))
-                   
-                   if(crs(training_img) != crs(training_shp)){
-                       training_shp <- training_shp %>% 
-                           terra::project(crs(training_img))
+                      shinyjs::show("loading-animation")
+                       
+                       training_img <- rasterData()
+                       training_shp <- terra::vect(shp_training()) 
+                       
+                   if(!is.numeric(training_shp[input$trainingClassColumn] [[1]][[1]])){
+                       showNotification(paste("The column of the shapefile used to train the model must contain numeric data"), type = "warning")
+                       shinyjs::hide("loading-animation")
+                   }else{
+                       
+                       names(training_img)<-paste0("B",c(1:nlyr(training_img)))
+                       
+                       if(crs(training_img) != crs(training_shp)){
+                           training_shp <- training_shp %>% 
+                               terra::project(crs(training_img))
+                       }
+                       
+                       x <- terra::rasterize(training_shp, training_img, field = input$trainingClassColumn)
+                       
+                       df <- c(training_img,x) %>% 
+                           as.data.frame() %>%
+                           dplyr::rename(class = colnames(.)[ncol(.)]) %>% 
+                           dplyr::filter(!is.na(class)) %>% 
+                           mutate(class =as.factor(class))
+                       
+                       
+                       # Example dataframe: assuming df is already available in your environment
+                       # target_column_name is the name of the column you're trying to predict
+                       
+                       # Set a seed for reproducibility
+                       set.seed(123)
+                       
+                       # Split the data into training and testing sets (80% training, 20% testing)
+                       data_split <- initial_split(df, prop = 0.8)
+                       train_data <- training(data_split)
+                       test_data <- testing(data_split)
+                       
+                       # Create a recipe: specify the target and predictors
+                       # Assumes target_column_name is the column to predict, with all other columns as predictors
+                       rf_recipe <- recipe(class ~ ., data = train_data)
+                       
+                       # Define the random forest model specification
+                       rf_spec <- rand_forest(
+                           trees = 500,       # Number of trees
+                           min_n = 3          # Minimum number of samples in a node
+                       ) %>%
+                           set_engine("ranger") %>%
+                           set_mode("classification")  # Change to "regression" if predicting a continuous variable
+                       
+                       # Create the workflow
+                       rf_workflow <- workflow() %>%
+                           add_recipe(rf_recipe) %>%
+                           add_model(rf_spec)
+                       
+                       # Train the model using 5-fold cross-validation
+                       set.seed(123)
+                       rf_resamples <- vfold_cv(train_data, v = 5)
+                       
+                       rf_fit <- rf_workflow %>%
+                           fit_resamples(
+                               rf_resamples,
+                               metrics = metric_set(accuracy, roc_auc),  # Choose metrics for classification
+                               control = control_resamples(save_pred = TRUE)
+                           )
+                       
+                       # Finalize the model by fitting on the full training data
+                       rf_final_fit <- rf_workflow %>%
+                           last_fit(data_split)
+                       
+                       # Print results from the final model
+                       metrics <- rf_final_fit %>% collect_metrics()
+                       
+                       # Get the fitted model
+                       final_model <- rf_final_fit %>% extract_workflow()
+                       
+                       # Make predictions on the test set
+                       # test_predictions <- predict(final_model, test_data)
+                       
+                       # Save model to disk
+                       saveRDS(final_model, file = paste0(savingpathmodel(),"/",input$modelname,".rds"))
+                       shinyjs::hide("loading-animation")
+                       
+                       
+                       # Display results
+                       output$trainResults <- renderPrint({
+                           print(paste0("Out-of-the-bag accuracy is ", round(metrics$.estimate[1],2)))
+                       })
+                       
+                       showNotification("Random Forest training completed successfully!", type = "message")
                    }
                    
-                   x <- terra::rasterize(training_shp, training_img, field = input$trainingClassColumn)
                    
-                   df <- c(training_img,x) %>% 
-                       as.data.frame() %>%
-                       dplyr::rename(class = colnames(.)[ncol(.)]) %>% 
-                       dplyr::filter(!is.na(class)) %>% 
-                       mutate(class =as.factor(class))
-                   
-                   
-                   # Example dataframe: assuming df is already available in your environment
-                   # target_column_name is the name of the column you're trying to predict
-                   
-                   # Set a seed for reproducibility
-                   set.seed(123)
-                   
-                   # Split the data into training and testing sets (80% training, 20% testing)
-                   data_split <- initial_split(df, prop = 0.8)
-                   train_data <- training(data_split)
-                   test_data <- testing(data_split)
-                   
-                   # Create a recipe: specify the target and predictors
-                   # Assumes target_column_name is the column to predict, with all other columns as predictors
-                   rf_recipe <- recipe(class ~ ., data = train_data)
-                   
-                   # Define the random forest model specification
-                   rf_spec <- rand_forest(
-                       trees = 500,       # Number of trees
-                       min_n = 3          # Minimum number of samples in a node
-                   ) %>%
-                       set_engine("ranger") %>%
-                       set_mode("classification")  # Change to "regression" if predicting a continuous variable
-                   
-                   # Create the workflow
-                   rf_workflow <- workflow() %>%
-                       add_recipe(rf_recipe) %>%
-                       add_model(rf_spec)
-                   
-                   # Train the model using 5-fold cross-validation
-                   set.seed(123)
-                   rf_resamples <- vfold_cv(train_data, v = 5)
-                   
-                   rf_fit <- rf_workflow %>%
-                       fit_resamples(
-                           rf_resamples,
-                           metrics = metric_set(accuracy, roc_auc),  # Choose metrics for classification
-                           control = control_resamples(save_pred = TRUE)
-                       )
-                   
-                   # Finalize the model by fitting on the full training data
-                   rf_final_fit <- rf_workflow %>%
-                       last_fit(data_split)
-                   
-                   # Print results from the final model
-                   metrics <- rf_final_fit %>% collect_metrics()
-                   
-                   # Get the fitted model
-                   final_model <- rf_final_fit %>% extract_workflow()
-                   
-                   # Make predictions on the test set
-                   # test_predictions <- predict(final_model, test_data)
-                   
-                   # Save model to disk
-                   saveRDS(final_model, file = paste0(input$modelname,".rds"))
-                   shinyjs::hide("loading-animation")
-                   
-                   
-                   # Display results
-                   output$trainResults <- renderPrint({
-                       print(paste0("Out-of-the-bag accuracy is ", round(metrics$.estimate[1],2)))
-                   })
-                   
-                   showNotification("Random Forest training completed successfully!", type = "message")
                }, error = function(e) {
                    showNotification(paste("Error in Random Forest training:", e$message), type = "error")
                })
-           }else{
-               break
+               
            }
         }, error = function(e) {
-            showNotification("Give a name to the model !", type = "error")
+            showNotification("Give a directory and a name to the model !", type = "error")
             return(NULL)
         })
         
 
     })
+    
+    observeEvent(input$selectsaving_prediction,{
+        path_pred <- rstudioapi::selectDirectory(caption = "where the model is saved")
+        savingpathpred(path_pred)
+        output$prediction_saving_path <- renderPrint({path_pred})
+    })
+    
     
     # Predict using trained Random Forest model
     observeEvent(input$predictRF, {
@@ -574,54 +642,67 @@ server <- function(input, output, session) {
             return(NULL)
         })
         
-        tryCatch({
-            shinyjs::show("loading-animation")
-            
-            img<-rasterData()
-            names(img) <- paste0("B",c(1:nlyr(img)))
-            
-            raster_df <- as.data.frame(img, xy = TRUE, na.rm = TRUE)
-            
-            # Make sure the column names of the raster_df match the variable names the model expects
-            # For example, if your model expects variables named "var1", "var2", etc.
-            # you can rename the raster_df columns if needed:
-            # names(raster_df)[3:5] <- c("var1", "var2", "var3")  # Adjust based on your variables
-            
-            # Make predictions using the model
-            predictions <- predict(rfModel, new_data = raster_df)
-            
-            # Add the predictions to the raster_df
-            raster_df$predictions <- predictions$.pred_class  # If classification model
-            # For regression, use `predictions$.pred`
-            
-            # Convert the predictions back to a raster format
-            prediction_raster <- rast(raster_df[, c("x", "y", "predictions")], type = "xyz")
-            
-            crs(prediction_raster) <- crs(img)
-            
-            # Save the predicted raster
-            writeRaster(prediction_raster, "predicted_raster.tif", overwrite = TRUE)
-            
-            extent_raster <- terra::project(ext(prediction_raster), from = terra::crs(rasterData()), to = "+proj=longlat +datum=WGS84 +no_defs")
-            
-            # Display results on the map
-            leafletProxy("map") %>%
-                clearImages() %>%
-                addRasterImage(prediction_raster, group = "Prediction") %>% 
-           
-                flyToBounds(
-                    lng1 = as.numeric(ext(extent_raster)[1]),
-                    lat1 = as.numeric(ext(extent_raster)[3]),
-                    lng2 = as.numeric(ext(extent_raster)[2]),
-                    lat2 = as.numeric(ext(extent_raster)[4]))
-            
-            shinyjs::hide("loading-animation")    
-            
-            
-            showNotification("Prediction completed successfully!", type = "message")
-        }, error = function(e) {
-            showNotification(paste("Error in prediction:", e$message), type = "error")
-        })
+        if(is.null(savingpathpred()) | nchar(input$prediction_name) == 0){
+            showNotification(paste("Give a path and a name to the prediction"), type = "warning")
+        }else{
+            tryCatch({
+                shinyjs::show("loading-animation")
+                
+                img<-rasterData()
+                names(img) <- paste0("B",c(1:nlyr(img)))
+                
+                raster_df <- as.data.frame(img, xy = TRUE, na.rm = TRUE)
+                
+                # Make sure the column names of the raster_df match the variable names the model expects
+                # For example, if your model expects variables named "var1", "var2", etc.
+                # you can rename the raster_df columns if needed:
+                # names(raster_df)[3:5] <- c("var1", "var2", "var3")  # Adjust based on your variables
+                
+                # Make predictions using the model
+                predictions <- predict(rfModel, new_data = raster_df)
+                
+                # Add the predictions to the raster_df
+                raster_df$predictions <- predictions$.pred_class  # If classification model
+                # For regression, use `predictions$.pred`
+                
+                # Convert the predictions back to a raster format
+                prediction_raster <- rast(raster_df[, c("x", "y", "predictions")], type = "xyz")
+                
+                crs(prediction_raster) <- crs(img)
+                
+                # Save the predicted raster
+                writeRaster(prediction_raster, "predicted_raster.tif", overwrite = TRUE)
+                
+                extent_raster <- terra::project(ext(prediction_raster), from = terra::crs(rasterData()), to = "+proj=longlat +datum=WGS84 +no_defs")
+                
+                # Display results on the map
+                leafletProxy("map") %>%
+                    clearGroup("Prediction") %>%
+                    addRasterImage(prediction_raster, group = "Prediction",method = "ngb") %>% 
+                    
+                    flyToBounds(
+                        lng1 = as.numeric(ext(extent_raster)[1]),
+                        lat1 = as.numeric(ext(extent_raster)[3]),
+                        lng2 = as.numeric(ext(extent_raster)[2]),
+                        lat2 = as.numeric(ext(extent_raster)[4])) %>% 
+                    removeLayersControl() %>% 
+                    leaflet::addLayersControl(
+                        baseGroups = c("OpenStreetMap", "ESRI Satellite"),
+                        overlayGroups = c("Prediction"),
+                        options = layersControlOptions(collapsed = FALSE),
+                        position = "topright"
+                    )
+                
+                shinyjs::hide("loading-animation")    
+                
+                
+                showNotification("Prediction completed successfully!", type = "message")
+            }, error = function(e) {
+                showNotification(paste("Error in prediction:", e$message), type = "error")
+            })   
+        }
+        
+        
     })
     
     # Validate the model
