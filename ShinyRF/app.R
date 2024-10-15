@@ -86,6 +86,8 @@ ui <- navbarPage(
                                   hr(),
                                   
                                   h4("2. Save Shapefile"),
+                                  actionButton("savedirselectshp", "Select a Directory", class = "btn-success"),
+                                  verbatimTextOutput("shp_saving_path"),
                                   actionButton("saveShapefile", "Save Shapefile", class = "btn-success", disabled = TRUE)
                          ),
                          
@@ -233,11 +235,20 @@ server <- function(input, output, session) {
     currentPolygon <- reactiveVal(NULL)
     savingpathmodel <- reactiveVal(NULL)
     savingpathpred <- reactiveVal(NULL)
+    savingpathshp <- reactiveVal(NULL)
     shapefileData <- reactiveVal(NULL)
     color_pal_polygons <- reactiveVal(NULL)
     isTrainingPlotted <- reactiveVal(NULL)
     pred_raster<- reactiveVal(NULL)
     color_pal_pred <- reactiveVal(NULL)
+    
+    
+    isTrainingPolygonsPlotted <- reactiveVal(NULL)
+    TrainingPolygons_colors <- reactiveVal(NULL)
+    
+    isPredictionPlotted <- reactiveVal(NULL)
+    Prediction_colors <- reactiveVal(NULL)
+    
     #### MAP OUTPUT ####
     
     # Initialize a blank map that remains visible at all times
@@ -478,16 +489,36 @@ server <- function(input, output, session) {
         updateActionButton(session, "saveShapefile", disabled = FALSE)
     })
     
+    observeEvent(input$savedirselectshp,{
+        path_shp <- rstudioapi::selectDirectory(caption = "where to save the shapefile")
+        savingpathshp(path_shp)
+        output$shp_saving_path <- renderPrint({path_shp})
+    })
+    
     # Save the shapefile
     observeEvent(input$saveShapefile, {
         req(drawnPolygons(), shapefileStructure())
         
-        polygons <- drawnPolygons()
-        shapefilePath <- file.path(getwd(), paste0(shapefileStructure()$name, ".shp"))
         
+        polygons <- drawnPolygons()
+        shapefilePath <- file.path(savingpathshp(), paste0(shapefileStructure()$name, ".shp"))
+        a<- polygons %>% as.data.frame()
+        for(i in 1:(length(names(a))-1)){
+            
+            test <- any(is.na(as.numeric(a[,i])))
+            
+            if (!test) {
+                a[,i] <- as.numeric(a[,i])  
+                
+            }
+        }
+        polygons <- st_as_sf(a)
         # Save the shapefile
         st_write(polygons, shapefilePath, delete_layer = TRUE)
         showNotification(paste("Shapefile saved at:", shapefilePath), type = "message")
+        
+        leafletProxy("map") %>%
+            clearShapes()
     })
     
     #### RANDOM FOREST TAB ####
@@ -625,15 +656,19 @@ server <- function(input, output, session) {
         
         color_pal_polygons(colorFunc)
         
-        isplotted <- isTrainingPlotted()
-        if(!is.null(isplotted)){
+        TrainingPolygons_colors(colorFunc(shp_training()[[input$symbologyColumn]]))
+        
+        isplotted_shp <- isTrainingPolygonsPlotted()
+        isplotted_pred <- isPredictionPlotted()
+        if(!is.null(isplotted_shp) & is.null(isplotted_pred)){
             leafletProxy("map") %>%
                 clearShapes() %>%  # Clear any previous shapes
                 clearControls() %>% 
-                clearGroup("Training_Shapefile") %>% # Clear any previous legends
+                clearGroup("Training_Shapefile") %>%
+                clearGroup("Prediction") %>% 
                 addPolygons(
                     data = shp_training(),
-                    color = ~colorFunc(shp_training()[[input$symbologyColumn]]),  # Dynamically color polygons
+                    color = ~ TrainingPolygons_colors(),  # Dynamically color polygons
                     weight = 2,
                     opacity = 1.0,
                     fillOpacity = 0.5,
@@ -654,6 +689,47 @@ server <- function(input, output, session) {
                     position = "topright"
                 )
             
+        }else if(!is.null(isplotted_shp) & !is.null(isplotted_pred)){
+            
+            leafletProxy("map") %>%
+                clearShapes() %>%  # Clear any previous shapes
+                clearControls() %>% 
+                clearGroup("Training_Shapefile") %>%
+                clearGroup("Prediction") %>% 
+                addRasterImage(pred_raster(), group = "Prediction",method = "ngb", colors = function(values){
+                    Prediction_colors(values) 
+                }) %>% 
+                addPolygons(
+                    data = shp_training(),
+                    color = ~ TrainingPolygons_colors(),  # Dynamically color polygons
+                    weight = 2,
+                    opacity = 1.0,
+                    fillOpacity = 0.5,
+                    group = "Training_Shapefile"
+                ) %>%
+                # removeLayersControl() %>% 
+                leaflet::addLayersControl(
+                    baseGroups = c("OpenStreetMap", "ESRI Satellite"),
+                    overlayGroups = c("Prediction", "Training_Shapefile"),
+                    options = layersControlOptions(collapsed = FALSE),
+                    position = "topright"
+                ) %>%
+                addLegend(
+                    pal = colorFunc,  # Same color palette
+                    values = unique_values,  # Corresponding values
+                    title = input$symbologyColumn,  # Legend title as the column name
+                    position = "bottomright",  # Position the legend
+                    opacity = 1.0,
+                    group = "Training_Shapefile"
+                ) %>% 
+                addLegend(
+                    pal = colorFunc_pred,  # Same color palette
+                    values = unique(values(raster_pred)),  # Corresponding values
+                    title = "Prediction",  # Legend title as the column name
+                    position = "bottomright",  # Position the legend
+                    opacity = 1.0,
+                    group = "Prediction"
+                )
         }
         # Update the map with the new symbology
         # leafletProxy("map") %>%
@@ -672,7 +748,8 @@ server <- function(input, output, session) {
     observeEvent(input$showpolyonmap, {
         req(shp_training())
         
-        pal <- color_pal_polygons()
+        pal <- TrainingPolygons_colors()
+        isplotted_pred <- isPredictionPlotted()
         
         if(is.null(pal)){
             leafletProxy("map") %>%
@@ -693,37 +770,79 @@ server <- function(input, output, session) {
                     position = "topright"
                 )
         }else{
-            unique_values <- unique(shp_training()[[input$symbologyColumn]])
-            leafletProxy("map") %>%
-                clearShapes() %>%  # Clear any previous shapes
-                clearControls() %>%
-                clearGroup("Training_Shapefile") %>% 
-                addPolygons(
-                    data = shp_training(),
-                    color = ~pal(shp_training()[[input$symbologyColumn]]),  # Dynamically color polygons
-                    weight = 2,
-                    opacity = 1.0,
-                    fillOpacity = 0.5,
-                    group = "Training_Shapefile"
-                ) %>%
-                addLegend(
-                    pal = pal,  # Same color palette
-                    values = unique_values,  # Corresponding values
-                    title = input$symbologyColumn,  # Legend title as the column name
-                    position = "bottomright",  # Position the legend
-                    opacity = 1.0,
-                    group = "Training_Shapefile"
-                )%>% 
-                leaflet::addLayersControl(
-                    baseGroups = c("OpenStreetMap", "ESRI Satellite"),
-                    overlayGroups = c("Training_Shapefile"),
-                    options = layersControlOptions(collapsed = FALSE),
-                    position = "topright"
-                )
+            if(is.null(isplotted_pred)){
+                
+                leafletProxy("map") %>%
+                    clearShapes() %>%  # Clear any previous shapes
+                    clearControls() %>%
+                    clearGroup("Training_Shapefile") %>% 
+                    addPolygons(
+                        data = shp_training(),
+                        color = ~TrainingPolygons_colors(),  # Dynamically color polygons
+                        weight = 2,
+                        opacity = 1.0,
+                        fillOpacity = 0.5,
+                        group = "Training_Shapefile"
+                    ) %>%
+                    addLegend(
+                        pal = pal,  # Same color palette
+                        values = unique(shp_training()[[input$symbologyColumn]]),  # Corresponding values
+                        title = input$symbologyColumn,  # Legend title as the column name
+                        position = "bottomright",  # Position the legend
+                        opacity = 1.0,
+                        group = "Training_Shapefile"
+                    )%>% 
+                    leaflet::addLayersControl(
+                        baseGroups = c("OpenStreetMap", "ESRI Satellite"),
+                        overlayGroups = c("Training_Shapefile"),
+                        options = layersControlOptions(collapsed = FALSE),
+                        position = "topright"
+                    ) 
+            }else{
+                leafletProxy("map") %>%
+                    clearShapes() %>%  # Clear any previous shapes
+                    clearControls() %>% 
+                    clearGroup("Training_Shapefile") %>%
+                    clearGroup("Prediction") %>% 
+                    addRasterImage(pred_raster(), group = "Prediction",method = "ngb", colors = function(values){
+                        Prediction_colors(values) 
+                    }) %>% 
+                    addPolygons(
+                        data = shp_training(),
+                        color = ~ TrainingPolygons_colors(),  # Dynamically color polygons
+                        weight = 2,
+                        opacity = 1.0,
+                        fillOpacity = 0.5,
+                        group = "Training_Shapefile"
+                    ) %>%
+                    # removeLayersControl() %>% 
+                    leaflet::addLayersControl(
+                        baseGroups = c("OpenStreetMap", "ESRI Satellite"),
+                        overlayGroups = c("Prediction", "Training_Shapefile"),
+                        options = layersControlOptions(collapsed = FALSE),
+                        position = "topright"
+                    ) %>%
+                    addLegend(
+                        pal = colorFunc,  # Same color palette
+                        values = unique_values,  # Corresponding values
+                        title = input$symbologyColumn,  # Legend title as the column name
+                        position = "bottomright",  # Position the legend
+                        opacity = 1.0,
+                        group = "Training_Shapefile"
+                    ) %>% 
+                    addLegend(
+                        pal = colorFunc_pred,  # Same color palette
+                        values = unique(values(raster_pred)),  # Corresponding values
+                        title = "Prediction",  # Legend title as the column name
+                        position = "bottomright",  # Position the legend
+                        opacity = 1.0,
+                        group = "Prediction"
+                    )
+            } 
             
         }
         
-        isTrainingPlotted(TRUE)
+        isTrainingPolygonsPlotted(TRUE)
         
 
         
@@ -987,7 +1106,7 @@ server <- function(input, output, session) {
         # Create a color mapping function
         colorFunc_pred <- colorFactor(palette = colors_assigned, domain = unique_values_pred, na.color = "transparent")
         
-        color_pal_pred(colorFunc_pred)
+        Prediction_colors(colorFunc_pred)
         
        leafletProxy("map") %>%
             clearGroup("Prediction") %>%
@@ -1000,7 +1119,7 @@ server <- function(input, output, session) {
                 overlayGroups = c("Prediction"),
                 options = layersControlOptions(collapsed = FALSE),
                 position = "topright"
-            )%>%
+            ) %>%
            addLegend(
                pal = colorFunc_pred,  # Same color palette
                values = unique(values(raster_pred)),  # Corresponding values
@@ -1010,7 +1129,7 @@ server <- function(input, output, session) {
                group = "Prediction"
            )
             
-        
+        isPredictionPlotted(TRUE)
 
     })
     
