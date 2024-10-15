@@ -1,4 +1,5 @@
 library(shiny)
+library(shinyWidgets) 
 library(leaflet)
 library(leafem)
 library(terra)
@@ -6,36 +7,189 @@ library(sf)
 library(leaflet.extras)
 library(tidymodels)
 library(shinyjs)  
-library(stars)# Add shinyjs library
+library(stars)
+library(bslib)
+library(colourpicker)
 
 # Increase the maximum file upload size (100 MB in this example)
 options(shiny.maxRequestSize = 100*1024^2)
 
-# Define UI
-ui <- fluidPage(
-    useShinyjs(),  # Include shinyjs
+
+ui <- navbarPage(
     
-    # Add custom CSS to make the map take up the entire screen and include the loader CSS
+    title = "My Shiny App",
+    id = "nav",
+    theme = bs_theme(), 
+    useShinyjs(),# Start with an empty theme that we'll customize
+    # header = tagList(
+    #     # Add a switch input for light/dark mode
+    #     tags$style(HTML("
+    #         .navbar-nav {
+    #             flex-direction: row;
+    #         }
+    #         .custom-control-label::before {
+    #             background-color: #adb5bd;
+    #         }
+    #         .ms-auto {
+    #             margin-left: auto !important;
+    #         }
+    #         .me-3 {
+    #             margin-right: 1rem !important;
+    #         }
+    #         
+    #     "))
+    #     # div(
+    #     #     class = "ms-auto me-3",
+    #     #     switchInput(
+    #     #         inputId = "dark_mode",
+    #     #         label = "Dark Mode",
+    #     #         value = FALSE,
+    #     #         onLabel = "On",
+    #     #         offLabel = "Off",
+    #     #         size = "small"
+    #     #     )
+    #     # )
+    # ),
+    tabPanel("Map",
+             # Loading animation
+             div(id = "loading-animation", div(class = "loader")),
+             
+             # Main content
+             fluidRow(
+                 column(
+                     width = 3,
+                     # Sidebar with three tabs for controls
+                     tabsetPanel(
+                         tabPanel("Raster",
+                                  h4("1. Load Raster Data"),
+                                  helpText("Select a raster file to load."),
+                                  fileInput("rasterFile", "Choose a Raster File",
+                                            accept = c(".tif", ".asc")),
+                                  actionButton("loadRaster", "Load Raster", class = "btn-primary"),
+                                  
+                                  hr(),
+                                  
+                                  h4("2. Band Selection"),
+                                  uiOutput("bandSelectionUI"),
+                                  
+                                  hr(),
+                                  
+                                  helpText("Supported formats: .tif, .asc, etc.")
+                         ),
+                         
+                         tabPanel("Shapefile",
+                                  h4("1. Create Shapefile"),
+                                  textInput("shapeFileName", "Enter a name for the Shapefile"),
+                                  textInput("columns", "Enter column names (comma separated)"),
+                                  actionButton("createShapefile", "Create Shapefile", class = "btn-success"),
+                                  
+                                  hr(),
+                                  
+                                  h4("2. Save Shapefile"),
+                                  actionButton("saveShapefile", "Save Shapefile", class = "btn-success", disabled = TRUE)
+                         ),
+                         
+                         tabPanel("Random Forest",
+                                  # Sub-tabs for Random Forest workflow
+                                  tabsetPanel(
+                                      tabPanel("Training",
+                                               # First section: Selection and loading of the shapefile
+                                               h4("1. Load Training Data"),
+                                               helpText("Select shapefile and define class column for training."),
+                                               fileInput("trainingShapefile", "Choose Shapefile (select all files)",
+                                                         multiple = TRUE,
+                                                         accept = c('.shp', '.dbf', '.sbn', '.sbx', '.shx', '.prj', '.cpg', '.xml')),
+                                               actionButton("loadTrainingdata", "Load Training Data", class = "btn-primary"),
+                                               
+                                               hr(),
+                                               
+                                               # Second section: Displaying and symbology
+                                               h4("2. Display and Customize Polygons"),
+                                               fluidRow(
+                                                   column(
+                                                       width = 6,
+                                                       uiOutput("showpolyonmapbutton")
+                                                   ),
+                                                   column(
+                                                       width = 6,
+                                                       uiOutput("symbology_training")
+                                                   )
+                                               ),
+                                               
+                                               hr(),
+                                               
+                                               # Third section: Model parameters
+                                               h4("3. Model Parameters"),
+                                               uiOutput("trainingClassColumnUI"),
+                                               actionButton("selectsaving", "Select a Directory", class = "btn-secondary"),
+                                               verbatimTextOutput("model_saving_path"),
+                                               textInput("modelname", "Enter the name of the model"),
+                                               uiOutput("RunTraining")
+                                               # verbatimTextOutput("trainResults")
+                                      ),
+                                      tabPanel("Prediction",
+                                               # First section: Load trained model
+                                               h4("1. Load Trained Model"),
+                                               helpText("Select a trained model to predict on raster."),
+                                               fileInput("modelFile", "Choose a Trained Model File", accept = c(".rds")),
+                                               
+                                               hr(),
+                                               
+                                               # Second section: Prediction settings
+                                               h4("2. Prediction Settings"),
+                                               actionButton("selectsaving_prediction", "Select a Directory", class = "btn-secondary"),
+                                               verbatimTextOutput("prediction_saving_path"),
+                                               textInput("prediction_name", "Enter the name of the prediction"),
+                                               
+                                               hr(),
+                                               
+                                               # Third section: Run prediction
+                                               actionButton("predictRF", "Predict on Raster", class = "btn-primary"),
+                                               
+                                               hr(),
+                                               h4("4. Raster Symbology"),
+                                               actionButton("Symbology_Pred", "Symbology", class = "btn-primary", disabled = T)
+                                               
+                                               
+                                      ),
+                                      tabPanel("Validation",
+                                               # First section: Load validation data
+                                               h4("1. Load Validation Data"),
+                                               helpText("Select shapefile and define class column for validation."),
+                                               fileInput("validationShapefile", "Choose Shapefile (select all files)",
+                                                         multiple = TRUE,
+                                                         accept = c('.shp', '.dbf', '.sbn', '.sbx', '.shx', '.prj', '.cpg', '.xml')),
+                                               
+                                               hr(),
+                                               
+                                               # Second section: Validation parameters
+                                               h4("2. Validation Parameters"),
+                                               uiOutput("validationClassColumnUI"),
+                                               
+                                               hr(),
+                                               
+                                               # Third section: Run validation
+                                               actionButton("validateRF", "Validate Model", class = "btn-primary"),
+                                               verbatimTextOutput("validationResults")
+                                      )
+                                  )
+                         )
+                     )
+                 ),
+                 column(
+
+                     width = 9,
+                     # Leaflet map output
+                     leafletOutput("map", height = "85vh")
+                 )
+             )
+    ),
+    
+    
+    # Custom CSS
     tags$head(
         tags$style(HTML("
-            #map {
-                height: 90vh !important;
-                width: 70vw !important;
-                margin: 0;
-                position: absolute;
-                top: 0;
-                left: 0;
-                z-index: 1;
-            }
-            body, html {
-                margin: 0;
-                padding: 0;
-                height: 100%;
-                overflow: hidden;
-            }
-            .panel-container {
-                z-index: 1000;
-            }
+            /* Loader CSS */
             #loading-animation {
                 position: fixed;
                 top: 50%;
@@ -44,100 +198,29 @@ ui <- fluidPage(
                 z-index: 2000;
                 display: none;
             }
-
-            /* Loader CSS */
             .loader {
                 width: 50px;
-                padding: 8px;
-                aspect-ratio: 1;
+                height: 50px;
+                border: 5px solid #f3f3f3;
+                border-top: 5px solid #3498db;
                 border-radius: 50%;
-                background: #25b09b;
-                --_m: 
-                    conic-gradient(#0000 10%, #000),
-                    linear-gradient(#000 0 0) content-box;
-                -webkit-mask: var(--_m);
-                mask: var(--_m);
-                -webkit-mask-composite: source-out;
-                mask-composite: subtract;
-                animation: l3 1s infinite linear;
+                animation: spin 1s linear infinite;
             }
-            @keyframes l3 { to { transform: rotate(1turn); } }
+            @keyframes spin {
+                to { transform: rotate(360deg); }
+            }
+            /* Adjustments for the sidebar */
+            .tab-content {
+                padding-top: 20px;
+            }
+            /* Adjustments for the map */
+            #map {
+                border: 1px solid #ccc;
+            }
         "))
-    ),
-    
-    # Replace loading-animation div
-    div(id = "loading-animation", div(class = "loader")),
-    
-    # Layout with sidebar for controls and main panel for map
-    sidebarLayout(
-        # Sidebar with three tabs for controls
-        sidebarPanel(
-            width = 3,  # Adjust width of sidebar if needed
-            tabsetPanel(
-                tabPanel("Raster",
-                         # Panel for raster controls
-                         fileInput("rasterFile", "Choose a Raster File",
-                                   accept = c(".tif", ".asc")),
-                         actionButton("loadRaster", "Load Raster"),
-                         uiOutput("bandSelectionUI"),
-                         
-                         helpText("Supported formats: .tif, .asc, etc.")
-                ),
-                
-                tabPanel("Shapefile",
-                         # Panel for shapefile controls
-                         textInput("shapeFileName", "Enter a name for the Shapefile"),
-                         textInput("columns", "Enter column names (comma separated)"),
-                         actionButton("createShapefile", "Create Shapefile"),
-                         actionButton("saveShapefile", "Save Shapefile", disabled = TRUE)
-                ),
-                
-                tabPanel("Random Forest",
-                         # Sub-tabs for Random Forest workflow
-                         tabsetPanel(
-                             tabPanel("Training",
-                                      helpText("Select shapefile and define class column for training."),
-                                      fileInput("trainingShapefile", "Choose Shapefile (select all files)",
-                                                multiple = TRUE,
-                                                accept = c('.shp','.dbf','.sbn','.sbx','.shx','.prj','.cpg','.xml')),
-                                      actionButton("loadTrainingdata", "Load Training data"),
-                                      uiOutput("showpolyonmapbutton"),
-                                      uiOutput("trainingClassColumnUI"),
-                                      actionButton("selectsaving", "Select a directory"),
-                                      verbatimTextOutput("model_saving_path"),
-                                      textInput("modelname", "Enter the name of the model"),
-                                      uiOutput("RunTraining"),
-                                      verbatimTextOutput("trainResults")
-                             ),
-                             tabPanel("Prediction",
-                                      helpText("Select trained model to predict on raster."),
-                                      fileInput("modelFile", "Choose a Trained Model File", accept = c(".rds")),
-                                      actionButton("selectsaving_prediction", "Select a directory"),
-                                      verbatimTextOutput("prediction_saving_path"),
-                                      textInput("prediction_name", "Enter the name of the prediction"),
-                                      actionButton("predictRF", "Predict on Raster"),
-                                      verbatimTextOutput("predictResults")
-                             ),
-                             tabPanel("Validation",
-                                      helpText("Select shapefile and define class column for validation."),
-                                      fileInput("validationShapefile", "Choose Shapefile (select all files)",
-                                                multiple = TRUE,
-                                                accept = c('.shp','.dbf','.sbn','.sbx','.shx','.prj','.cpg','.xml')),
-                                      uiOutput("validationClassColumnUI"),
-                                      actionButton("validateRF", "Validate Model"),
-                                      verbatimTextOutput("validationResults")
-                             )
-                         )
-                )
-            )
-        ),
-        
-        # Main panel for leaflet map
-        mainPanel(
-            leafletOutput("map")
-        )
     )
 )
+
 
 # Define server logic
 server <- function(input, output, session) {
@@ -149,11 +232,29 @@ server <- function(input, output, session) {
     shapefileStructure <- reactiveVal(NULL)
     currentPolygon <- reactiveVal(NULL)
     savingpathmodel <- reactiveVal(NULL)
-    savingpathpred <- reactiveVal(NULL)# To store the current polygon being drawn
-    
+    savingpathpred <- reactiveVal(NULL)
+    shapefileData <- reactiveVal(NULL)
+    color_pal_polygons <- reactiveVal(NULL)
+    isTrainingPlotted <- reactiveVal(NULL)
+    pred_raster<- reactiveVal(NULL)
+    color_pal_pred <- reactiveVal(NULL)
     #### MAP OUTPUT ####
     
     # Initialize a blank map that remains visible at all times
+    
+    # Observe the dark_mode switch and update the theme
+    observeEvent(input$dark_mode, {
+        session$setCurrentTheme(
+            bs_theme(
+                bootswatch = if (isTRUE(input$dark_mode)) "darkly" else "minty",
+                base_font = font_google("Roboto"),
+                heading_font = font_google("Montserrat"),
+                bg = if (isTRUE(input$dark_mode)) "#343a40" else "#ffffff",
+                fg = if (isTRUE(input$dark_mode)) "#f8f9fa" else "#343a40",
+                primary = if (isTRUE(input$dark_mode)) "#0d6efd" else "#0d6efd"
+            )
+        )
+    })
     
     output$map <- 
         renderLeaflet({
@@ -437,7 +538,10 @@ server <- function(input, output, session) {
                     shp <- st_read(shpPath)
                     
                     # Ensure geometries are valid
-                    shp <- st_make_valid(shp)
+                    shp <- st_make_valid(shp) %>% 
+                        mutate(AA = c(1:n())) %>% 
+                        arrange(AA) %>% 
+                        dplyr::select(-AA)
                     shp_training(shp)
                     # Check and transform CRS if necessary
                     if (is.na(st_crs(shp))) {
@@ -461,6 +565,10 @@ server <- function(input, output, session) {
             req(trainingShapefile)
             actionButton("showpolyonmap", "Show polygons on the map")
             })
+        output$symbology_training <- renderUI({
+            req(trainingShapefile)
+            actionButton("symbologyTraining", "Symbology")
+        })
         
         output$RunTraining <- renderUI({
             req(trainingShapefile)
@@ -468,35 +576,156 @@ server <- function(input, output, session) {
         })
     })
     
+    observeEvent(input$symbologyTraining, {
+        req(shp_training())
+        showModal(modalDialog(
+            title = "Customize Symbology",
+            selectInput("symbologyColumn", "Select Column for Coloring", choices = names(shp_training())),
+            uiOutput("colorAssignmentUI"),
+            footer = tagList(
+                modalButton("Cancel"),
+                actionButton("applySymbology", "Apply", class = "btn-primary")
+            ),
+            size = "l"
+        ))
+    })
+    
+    # Generate UI for color assignment based on selected column
+    output$colorAssignmentUI <- renderUI({
+        req(input$symbologyColumn)
+
+        unique_values <- unique(shp_training()[[input$symbologyColumn]] )%>% sort()
+        
+        # Generate a color input for each unique value
+        lapply(seq_along(unique_values), function(i) {
+            value <- unique_values[i]
+            colourInput(
+                inputId = paste0("color_", i),
+                label = paste("Color for", value),
+                value = "blue",
+                allowTransparent = TRUE
+            )
+        })
+    })
+    
+    observeEvent(input$applySymbology, {
+        removeModal()
+        req(input$symbologyColumn)
+
+        unique_values <- unique(shp_training()[[input$symbologyColumn]])
+        
+        # Collect the colors assigned to each value
+        colors_assigned <- sapply(seq_along(unique_values), function(i) {
+            input[[paste0("color_", i)]]
+        })
+        names(colors_assigned) <- unique_values
+        
+        # Create a color mapping function
+        colorFunc <- colorFactor(palette = colors_assigned, domain = unique_values)
+        
+        color_pal_polygons(colorFunc)
+        
+        isplotted <- isTrainingPlotted()
+        if(!is.null(isplotted)){
+            leafletProxy("map") %>%
+                clearShapes() %>%  # Clear any previous shapes
+                clearControls() %>% 
+                clearGroup("Training_Shapefile") %>% # Clear any previous legends
+                addPolygons(
+                    data = shp_training(),
+                    color = ~colorFunc(shp_training()[[input$symbologyColumn]]),  # Dynamically color polygons
+                    weight = 2,
+                    opacity = 1.0,
+                    fillOpacity = 0.5,
+                    group = "Training_Shapefile"
+                ) %>%
+                addLegend(
+                    pal = colorFunc,  # Same color palette
+                    values = unique_values,  # Corresponding values
+                    title = input$symbologyColumn,  # Legend title as the column name
+                    position = "bottomright",  # Position the legend
+                    opacity = 1.0,
+                    group = "Training_Shapefile"
+                ) %>% 
+                leaflet::addLayersControl(
+                    baseGroups = c("OpenStreetMap", "ESRI Satellite"),
+                    overlayGroups = c("Training_Shapefile"),
+                    options = layersControlOptions(collapsed = FALSE),
+                    position = "topright"
+                )
+            
+        }
+        # Update the map with the new symbology
+        # leafletProxy("map") %>%
+        #     clearShapes() %>%
+        #     addPolygons(
+        #         data = shp_training(),
+        #         fillColor = ~colorFunc(unique_values),
+        #         fillOpacity = 0.7,
+        #         color = "black",
+        #         weight = 1
+        #         # popup = ~paste(input$symbologyColumn, ":", .data[[input$symbologyColumn]])
+        #     )
+    })
+    
     
     observeEvent(input$showpolyonmap, {
-        req(input$trainingClassColumn, shp_training())
+        req(shp_training())
         
-        # Dynamically access the column chosen by the user
-        selected_column <- shp_training()[[input$trainingClassColumn]]
+        pal <- color_pal_polygons()
         
-        # Create a color palette based on the selected column
-        pal <- colorFactor(palette = "Set1", domain = selected_column)
+        if(is.null(pal)){
+            leafletProxy("map") %>%
+                clearShapes() %>%  # Clear any previous shapes
+                clearControls() %>% # Clear any previous legends
+                addPolygons(
+                    data = shp_training(),
+                    color = "blue",  # Dynamically color polygons
+                    weight = 2,
+                    opacity = 1.0,
+                    fillOpacity = 0.5,
+                    group = "Training_Shapefile"
+                )%>% 
+                leaflet::addLayersControl(
+                    baseGroups = c("OpenStreetMap", "ESRI Satellite"),
+                    overlayGroups = c("Training_Shapefile"),
+                    options = layersControlOptions(collapsed = FALSE),
+                    position = "topright"
+                )
+        }else{
+            unique_values <- unique(shp_training()[[input$symbologyColumn]])
+            leafletProxy("map") %>%
+                clearShapes() %>%  # Clear any previous shapes
+                clearControls() %>%
+                clearGroup("Training_Shapefile") %>% 
+                addPolygons(
+                    data = shp_training(),
+                    color = ~pal(shp_training()[[input$symbologyColumn]]),  # Dynamically color polygons
+                    weight = 2,
+                    opacity = 1.0,
+                    fillOpacity = 0.5,
+                    group = "Training_Shapefile"
+                ) %>%
+                addLegend(
+                    pal = pal,  # Same color palette
+                    values = unique_values,  # Corresponding values
+                    title = input$symbologyColumn,  # Legend title as the column name
+                    position = "bottomright",  # Position the legend
+                    opacity = 1.0,
+                    group = "Training_Shapefile"
+                )%>% 
+                leaflet::addLayersControl(
+                    baseGroups = c("OpenStreetMap", "ESRI Satellite"),
+                    overlayGroups = c("Training_Shapefile"),
+                    options = layersControlOptions(collapsed = FALSE),
+                    position = "topright"
+                )
+            
+        }
         
-        # Use leafletProxy to add polygons with colors based on the selected column
-        leafletProxy("map") %>%
-            clearShapes() %>%  # Clear any previous shapes
-            clearControls() %>%  # Clear any previous legends
-            addPolygons(
-                data = shp_training(),
-                color = ~pal(selected_column),  # Dynamically color polygons
-                weight = 2,
-                opacity = 1.0,
-                fillOpacity = 0.5,
-                group = "Shapefile"
-            ) %>%
-            addLegend(
-                pal = pal,  # Same color palette
-                values = selected_column,  # Corresponding values
-                title = input$trainingClassColumn,  # Legend title as the column name
-                position = "bottomright",  # Position the legend
-                opacity = 1.0
-            )
+        isTrainingPlotted(TRUE)
+        
+
         
     })
     # Train the model after selecting the class column
@@ -602,9 +831,8 @@ server <- function(input, output, session) {
                        
                        
                        # Display results
-                       output$trainResults <- renderPrint({
-                           print(paste0("Out-of-the-bag accuracy is ", round(metrics$.estimate[1],2)))
-                       })
+                       showNotification(print(paste0("Out-of-the-bag accuracy is ", round(metrics$.estimate[1],2))), type = "message")
+                       
                        
                        showNotification("Random Forest training completed successfully!", type = "message")
                    }
@@ -671,21 +899,25 @@ server <- function(input, output, session) {
                 crs(prediction_raster) <- crs(img)
                 
                 # Save the predicted raster
-                writeRaster(prediction_raster, "predicted_raster.tif", overwrite = TRUE)
+                writeRaster(prediction_raster, paste0(savingpathpred(),"/",input$prediction_name,".tif"), overwrite = TRUE)
                 
-                extent_raster <- terra::project(ext(prediction_raster), from = terra::crs(rasterData()), to = "+proj=longlat +datum=WGS84 +no_defs")
+                rm(prediction_raster)
+                pred_rast <- rast(paste0(savingpathpred(),"/",input$prediction_name,".tif"))
+                
+                pred_raster(pred_rast)
+                
+                extent_raster <- terra::project(ext(pred_rast), from = terra::crs(rasterData()), to = "+proj=longlat +datum=WGS84 +no_defs")
                 
                 # Display results on the map
                 leafletProxy("map") %>%
                     clearGroup("Prediction") %>%
-                    addRasterImage(prediction_raster, group = "Prediction",method = "ngb") %>% 
-                    
+                    addRasterImage(pred_rast, group = "Prediction",method = "ngb", layerId = "Pred_Ras") %>% 
                     flyToBounds(
                         lng1 = as.numeric(ext(extent_raster)[1]),
                         lat1 = as.numeric(ext(extent_raster)[3]),
                         lng2 = as.numeric(ext(extent_raster)[2]),
                         lat2 = as.numeric(ext(extent_raster)[4])) %>% 
-                    removeLayersControl() %>% 
+                    # removeLayersControl() %>% 
                     leaflet::addLayersControl(
                         baseGroups = c("OpenStreetMap", "ESRI Satellite"),
                         overlayGroups = c("Prediction"),
@@ -693,7 +925,8 @@ server <- function(input, output, session) {
                         position = "topright"
                     )
                 
-                shinyjs::hide("loading-animation")    
+                shinyjs::hide("loading-animation")
+                enable("Symbology_Pred")
                 
                 
                 showNotification("Prediction completed successfully!", type = "message")
@@ -703,6 +936,82 @@ server <- function(input, output, session) {
         }
         
         
+    })
+    
+    observeEvent(input$Symbology_Pred, {
+        req(pred_raster())
+        showModal(modalDialog(
+            title = "Customize Symbology",
+            helpText("Select color for each pixel value of the prediction :"),
+            uiOutput("colorAssignmentUI_Rast"),
+            footer = tagList(
+                modalButton("Cancel"),
+                actionButton("applySymbology_pred", "Apply", class = "btn-primary")
+            ),
+            size = "l"
+        ))
+    })
+    
+    # Generate UI for color assignment based on selected column
+    output$colorAssignmentUI_Rast <- renderUI({
+        req(pred_raster())
+        
+        unique_values_pred <- c(unique(values(pred_raster())) %>% as.numeric() %>% sort())
+        
+        # Generate a color input for each unique value
+        lapply(seq_along(unique_values_pred), function(i) {
+            value <- unique_values_pred[i]
+            colourInput(
+                inputId = paste0("color_", i),
+                label = paste("Color for", value),
+                value = "blue",
+                allowTransparent = TRUE
+            )
+        })
+    })
+    
+    observeEvent(input$applySymbology_pred, {
+        removeModal()
+        req(pred_raster())
+        
+        raster_pred <- pred_raster()
+
+        unique_values_pred <-  unique(values(raster_pred)) %>% as.numeric()  %>% sort()
+        
+        # Collect the colors assigned to each value
+        colors_assigned <- sapply(seq_along(unique_values_pred), function(i) {
+            input[[paste0("color_", i)]]
+        })
+        names(colors_assigned) <- unique_values_pred
+        
+        # Create a color mapping function
+        colorFunc_pred <- colorFactor(palette = colors_assigned, domain = unique_values_pred, na.color = "transparent")
+        
+        color_pal_pred(colorFunc_pred)
+        
+       leafletProxy("map") %>%
+            clearGroup("Prediction") %>%
+            addRasterImage(raster_pred, group = "Prediction",method = "ngb", colors = function(values){
+                colorFunc_pred(values) 
+            }) %>% 
+            # removeLayersControl() %>% 
+            leaflet::addLayersControl(
+                baseGroups = c("OpenStreetMap", "ESRI Satellite"),
+                overlayGroups = c("Prediction"),
+                options = layersControlOptions(collapsed = FALSE),
+                position = "topright"
+            )%>%
+           addLegend(
+               pal = colorFunc_pred,  # Same color palette
+               values = unique(values(raster_pred)),  # Corresponding values
+               title = "Prediction",  # Legend title as the column name
+               position = "bottomright",  # Position the legend
+               opacity = 1.0,
+               group = "Prediction"
+           )
+            
+        
+
     })
     
     # Validate the model
