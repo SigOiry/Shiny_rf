@@ -241,6 +241,7 @@ server <- function(input, output, session) {
     isTrainingPlotted <- reactiveVal(NULL)
     pred_raster<- reactiveVal(NULL)
     color_pal_pred <- reactiveVal(NULL)
+    symbology_col_training <- reactiveVal(NULL)
     
     
     isTrainingPolygonsPlotted <- reactiveVal(NULL)
@@ -642,6 +643,8 @@ server <- function(input, output, session) {
     observeEvent(input$applySymbology, {
         removeModal()
         req(input$symbologyColumn)
+        
+        symbology_col_training(input$symbologyColumn)
 
         unique_values <- unique(shp_training()[[input$symbologyColumn]])
         
@@ -657,6 +660,9 @@ server <- function(input, output, session) {
         color_pal_polygons(colorFunc)
         
         TrainingPolygons_colors(colorFunc(shp_training()[[input$symbologyColumn]]))
+        
+        pred_rast <- pred_raster()
+        colorFunc_pred <- Prediction_colors()
         
         isplotted_shp <- isTrainingPolygonsPlotted()
         isplotted_pred <- isPredictionPlotted()
@@ -696,8 +702,8 @@ server <- function(input, output, session) {
                 clearControls() %>% 
                 clearGroup("Training_Shapefile") %>%
                 clearGroup("Prediction") %>% 
-                addRasterImage(pred_raster(), group = "Prediction",method = "ngb", colors = function(values){
-                    Prediction_colors(values) 
+                addRasterImage(pred_rast, group = "Prediction",method = "ngb", colors = function(values){
+                    colorFunc_pred(values) 
                 }) %>% 
                 addPolygons(
                     data = shp_training(),
@@ -724,7 +730,7 @@ server <- function(input, output, session) {
                 ) %>% 
                 addLegend(
                     pal = colorFunc_pred,  # Same color palette
-                    values = unique(values(raster_pred)),  # Corresponding values
+                    values = unique(values(pred_rast)),  # Corresponding values
                     title = "Prediction",  # Legend title as the column name
                     position = "bottomright",  # Position the legend
                     opacity = 1.0,
@@ -750,6 +756,9 @@ server <- function(input, output, session) {
         
         pal <- TrainingPolygons_colors()
         isplotted_pred <- isPredictionPlotted()
+        raster_pred <- pred_raster()
+        
+        colorFunc_pred <- Prediction_colors()
         
         if(is.null(pal)){
             leafletProxy("map") %>%
@@ -785,9 +794,9 @@ server <- function(input, output, session) {
                         group = "Training_Shapefile"
                     ) %>%
                     addLegend(
-                        pal = pal,  # Same color palette
-                        values = unique(shp_training()[[input$symbologyColumn]]),  # Corresponding values
-                        title = input$symbologyColumn,  # Legend title as the column name
+                        pal = color_pal_polygons(),  # Same color palette
+                        values = unique(shp_training()[[symbology_col_training()]]),  # Corresponding values
+                        title = symbology_col_training(),  # Legend title as the column name
                         position = "bottomright",  # Position the legend
                         opacity = 1.0,
                         group = "Training_Shapefile"
@@ -804,8 +813,8 @@ server <- function(input, output, session) {
                     clearControls() %>% 
                     clearGroup("Training_Shapefile") %>%
                     clearGroup("Prediction") %>% 
-                    addRasterImage(pred_raster(), group = "Prediction",method = "ngb", colors = function(values){
-                        Prediction_colors(values) 
+                    addRasterImage(raster_pred, group = "Prediction",method = "ngb", colors = function(values){
+                        colorFunc_pred(values) 
                     }) %>% 
                     addPolygons(
                         data = shp_training(),
@@ -814,7 +823,7 @@ server <- function(input, output, session) {
                         opacity = 1.0,
                         fillOpacity = 0.5,
                         group = "Training_Shapefile"
-                    ) %>%
+                    ) %>% 
                     # removeLayersControl() %>% 
                     leaflet::addLayersControl(
                         baseGroups = c("OpenStreetMap", "ESRI Satellite"),
@@ -823,13 +832,13 @@ server <- function(input, output, session) {
                         position = "topright"
                     ) %>%
                     addLegend(
-                        pal = colorFunc,  # Same color palette
-                        values = unique_values,  # Corresponding values
-                        title = input$symbologyColumn,  # Legend title as the column name
+                        pal = color_pal_polygons(),  # Same color palette
+                        values = unique(shp_training()[[symbology_col_training()]]),  # Corresponding values
+                        title = symbology_col_training(),  # Legend title as the column name
                         position = "bottomright",  # Position the legend
                         opacity = 1.0,
                         group = "Training_Shapefile"
-                    ) %>% 
+                    ) %>%
                     addLegend(
                         pal = colorFunc_pred,  # Same color palette
                         values = unique(values(raster_pred)),  # Corresponding values
@@ -1047,6 +1056,8 @@ server <- function(input, output, session) {
                 shinyjs::hide("loading-animation")
                 enable("Symbology_Pred")
                 
+                # isPredictionPlotted(T)
+                
                 
                 showNotification("Prediction completed successfully!", type = "message")
             }, error = function(e) {
@@ -1108,27 +1119,69 @@ server <- function(input, output, session) {
         
         Prediction_colors(colorFunc_pred)
         
-       leafletProxy("map") %>%
-            clearGroup("Prediction") %>%
-            addRasterImage(raster_pred, group = "Prediction",method = "ngb", colors = function(values){
-                colorFunc_pred(values) 
-            }) %>% 
-            # removeLayersControl() %>% 
-            leaflet::addLayersControl(
-                baseGroups = c("OpenStreetMap", "ESRI Satellite"),
-                overlayGroups = c("Prediction"),
-                options = layersControlOptions(collapsed = FALSE),
-                position = "topright"
-            ) %>%
-           addLegend(
-               pal = colorFunc_pred,  # Same color palette
-               values = unique(values(raster_pred)),  # Corresponding values
-               title = "Prediction",  # Legend title as the column name
-               position = "bottomright",  # Position the legend
-               opacity = 1.0,
-               group = "Prediction"
-           )
+        if(is.null(isTrainingPolygonsPlotted())){
             
+            leafletProxy("map") %>%
+                clearGroup("Prediction") %>%
+                addRasterImage(raster_pred, group = "Prediction",method = "ngb", colors = function(values){
+                    colorFunc_pred(values) 
+                }) %>% 
+                # removeLayersControl() %>% 
+                leaflet::addLayersControl(
+                    baseGroups = c("OpenStreetMap", "ESRI Satellite"),
+                    overlayGroups = c("Prediction"),
+                    options = layersControlOptions(collapsed = FALSE),
+                    position = "topright"
+                ) %>%
+                addLegend(
+                    pal = colorFunc_pred,  # Same color palette
+                    values = unique(values(raster_pred)),  # Corresponding values
+                    title = "Prediction",  # Legend title as the column name
+                    position = "bottomright",  # Position the legend
+                    opacity = 1.0,
+                    group = "Prediction"
+                ) 
+        }else{
+            leafletProxy("map") %>%
+                clearShapes() %>%  # Clear any previous shapes
+                clearControls() %>% 
+                clearGroup("Training_Shapefile") %>%
+                clearGroup("Prediction") %>% 
+                addRasterImage(raster_pred, group = "Prediction",method = "ngb", colors = function(values){
+                    colorFunc_pred(values) 
+                }) %>% 
+                addPolygons(
+                    data = shp_training(),
+                    color = ~ TrainingPolygons_colors(),  # Dynamically color polygons
+                    weight = 2,
+                    opacity = 1.0,
+                    fillOpacity = 0.5,
+                    group = "Training_Shapefile"
+                ) %>%
+                # removeLayersControl() %>% 
+                leaflet::addLayersControl(
+                    baseGroups = c("OpenStreetMap", "ESRI Satellite"),
+                    overlayGroups = c("Prediction", "Training_Shapefile"),
+                    options = layersControlOptions(collapsed = FALSE),
+                    position = "topright"
+                ) %>%
+                addLegend(
+                    pal = color_pal_polygons(),  # Same color palette
+                    values = unique(shp_training()[[symbology_col_training()]]),  # Corresponding values
+                    title = symbology_col_training(),  # Legend title as the column name
+                    position = "bottomright",  # Position the legend
+                    opacity = 1.0,
+                    group = "Training_Shapefile"
+                ) %>% 
+                addLegend(
+                    pal = colorFunc_pred(),  # Same color palette
+                    values = unique(values(raster_pred)),  # Corresponding values
+                    title = "Prediction",  # Legend title as the column name
+                    position = "bottomright",  # Position the legend
+                    opacity = 1.0,
+                    group = "Prediction"
+                )
+        } 
         isPredictionPlotted(TRUE)
 
     })
